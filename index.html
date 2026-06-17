@@ -1380,45 +1380,34 @@ async function saveToDrive() {
     statusEl.textContent = 'Uploading to Drive…';
 
     // Upload as HTML file to Drive (renders well and is editable)
-    const metadata = {
-      name: fileName + '.html',
-      parents: [DRIVE_FOLDER_ID],
-      mimeType: 'text/html',
-      driveId: DRIVE_FOLDER_ID
-    };
-
+    // Step 1: Upload to My Drive root first
+    statusEl.textContent = 'Uploading…';
+    const metadata = { name: fileName + '.html', mimeType: 'text/html' };
     const boundary = 'cab_report_boundary';
-    const body = `--${boundary}
-Content-Type: application/json; charset=UTF-8
-
-${JSON.stringify(metadata)}
---${boundary}
-Content-Type: text/html
-Content-Transfer-Encoding: base64
-
-${b64}
---${boundary}--`;
+    const body = `--${boundary}\nContent-Type: application/json; charset=UTF-8\n\n${JSON.stringify(metadata)}\n--${boundary}\nContent-Type: text/html\nContent-Transfer-Encoding: base64\n\n${b64}\n--${boundary}--`;
 
     const uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink&supportsAllDrives=true', {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': `multipart/related; boundary=${boundary}`
-      },
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
       body
     });
+    const uploaded = await uploadResp.json();
+    if (!uploaded.id) throw new Error('Upload failed: ' + JSON.stringify(uploaded));
 
-    const result = await uploadResp.json();
+    // Step 2: Move into Cabinet Layout Reports folder
+    statusEl.textContent = 'Moving to folder…';
+    const moveResp = await fetch(`https://www.googleapis.com/drive/v3/files/${uploaded.id}?addParents=${DRIVE_FOLDER_ID}&removeParents=root&fields=id,webViewLink&supportsAllDrives=true`, {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    const moved = await moveResp.json();
+    const link = moved.webViewLink || uploaded.webViewLink;
+    statusEl.innerHTML = `✅ <a href="${link}" target="_blank" style="color:var(--accent)">Saved to Drive ↗</a>`;
+    toast(`Report saved: ${fileName}`);
+    setTimeout(() => { statusEl.textContent = ''; }, 8000);
 
-    if (result.id) {
-      statusEl.innerHTML = `✅ <a href="${result.webViewLink}" target="_blank" style="color:var(--accent)">Saved to Drive ↗</a>`;
-      toast(`Report saved: ${fileName}`);
-      setTimeout(() => { statusEl.textContent = ''; }, 8000);
-    } else {
-      throw new Error(JSON.stringify(result));
-    }
-
-  } catch (err) {
+} catch (err) {
     console.error('Drive error:', err);
     statusEl.textContent = '❌ Save failed';
     toast('Drive save failed — check console');
