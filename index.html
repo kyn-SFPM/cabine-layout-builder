@@ -1054,90 +1054,64 @@ function buildPlanSVG(layout) {
   const cabs = layout.cabinets;
   if (!cabs.length) return '<div style="padding:20px;color:#aaa;font-size:11px;text-align:center">No cabinets placed yet</div>';
 
-  const uppers = cabs.filter(c => c.type === 'upper').sort((a,b) => a.x - b.x);
-  const bases  = cabs.filter(c => c.type !== 'upper').sort((a,b) => a.x - b.x);
+  // Use actual canvas positions (c.x, c.y are in canvas px at SCALE px/inch)
+  // Find bounding box of all cabinets
+  const allX = cabs.map(c => c.x);
+  const allY = cabs.map(c => c.y);
+  const minX = Math.min(...allX);
+  const minY = Math.min(...allY);
+  const maxX = Math.max(...cabs.map(c => c.x + c.w * SCALE));
+  const maxY = Math.max(...cabs.map(c => c.y + c.h * SCALE));
 
-  // Work entirely in real inches so the SVG viewBox = inches × sc
-  // Find the actual span of placed cabinets (not just roomW)
-  const allCabs = [...uppers, ...bases];
-  const maxRight = Math.max(...allCabs.map(c => (c.x / SCALE) + c.w)); // inches from left edge
-  const runW = Math.max(layout.roomW, maxRight);
+  // SVG scale: compress canvas px to SVG units (canvas uses SCALE=4 px/inch)
+  // We want SVG at 1:1 canvas px ratio but shrunk to fit — use viewBox
+  const PAD = 24;
+  const svgW = (maxX - minX) + PAD * 2 + 40;
+  const svgH = (maxY - minY) + PAD * 2 + 20;
 
-  const upperH = uppers.length ? Math.max(...uppers.map(c => c.h)) : 30;
-  const baseH  = bases.length  ? Math.max(...bases.map(c => c.h))  : 34;
-
-  const sc = 4;
-  const PAD = 18;
-  const upperY = 20;
-  const gap = 16;
-  // baseY sits below tallest upper + gap (the 60" line falls at upperY + upperH*sc)
-  const baseY = upperY + upperH * sc + gap;
-  const svgW = runW * sc + PAD * 2 + 30; // extra right padding for 60" label
-  const svgH = baseY + baseH * sc + 28;
+  // offset so leftmost/topmost cab starts at PAD
+  const ox = PAD - minX;
+  const oy = PAD - minY;
 
   let r = '';
 
   // ── Total width dimension line ──
-  r += `<line x1="${PAD}" y1="12" x2="${PAD + runW*sc}" y2="12" stroke="#1B2A4A" stroke-width="0.8"/>`;
-  r += `<line x1="${PAD}" y1="8" x2="${PAD}" y2="16" stroke="#1B2A4A" stroke-width="0.8"/>`;
-  r += `<line x1="${PAD+runW*sc}" y1="8" x2="${PAD+runW*sc}" y2="16" stroke="#1B2A4A" stroke-width="0.8"/>`;
-  r += `<text x="${PAD+runW*sc/2}" y="10" text-anchor="middle" font-size="7" fill="#1B2A4A" font-weight="700">${runW}"</text>`;
+  const totalW = Math.round((maxX - minX) / SCALE);
+  r += `<line x1="${PAD}" y1="10" x2="${PAD + (maxX-minX)}" y2="10" stroke="#1B2A4A" stroke-width="0.8"/>`;
+  r += `<line x1="${PAD}" y1="6" x2="${PAD}" y2="14" stroke="#1B2A4A" stroke-width="0.8"/>`;
+  r += `<line x1="${PAD+(maxX-minX)}" y1="6" x2="${PAD+(maxX-minX)}" y2="14" stroke="#1B2A4A" stroke-width="0.8"/>`;
+  r += `<text x="${PAD+(maxX-minX)/2}" y="9" text-anchor="middle" font-size="7" fill="#1B2A4A" font-weight="700">${totalW}"</text>`;
 
-  // ── Wall bar ──
-  r += `<rect x="${PAD}" y="${upperY-2}" width="${runW*sc}" height="3" fill="#4A5568"/>`;
+  // ── Wall bar at top ──
+  r += `<rect x="${PAD}" y="${oy + minY - 3}" width="${maxX - minX}" height="3" fill="#4A5568"/>`;
 
-  // ── 60" reference line (below tallest upper, indicates floor-to-bottom distance) ──
-  const floorLineY = upperY + upperH * sc;
-  r += `<line x1="${PAD}" y1="${floorLineY}" x2="${PAD+runW*sc}" y2="${floorLineY}" stroke="#C8913A" stroke-width="0.7" stroke-dasharray="4,3"/>`;
-  r += `<text x="${PAD+runW*sc+4}" y="${floorLineY+3}" font-size="6.5" fill="#C8913A" font-weight="700">60"</text>`;
+  // ── 60" reference line using saved floorLineY from canvas, offset to SVG coords ──
+  if (layout.floorLineY) {
+    const flY = layout.floorLineY + oy;
+    r += `<line x1="${PAD}" y1="${flY}" x2="${PAD+(maxX-minX)}" y2="${flY}" stroke="#C8913A" stroke-width="0.8" stroke-dasharray="4,3"/>`;
+    r += `<text x="${PAD+(maxX-minX)+4}" y="${flY+3}" font-size="6.5" fill="#C8913A" font-weight="700">60"</text>`;
+  }
 
-  // ── Upper cabinets ──
-  uppers.forEach(c => {
-    const def = TYPES[c.type] || TYPES.upper;
-    const cxIn = c.x / SCALE; // inches from left
-    const cx = PAD + cxIn * sc;
-    const cw = c.w * sc;
-    const ch = c.h * sc;
-    // Top-align to wall, just like the builder canvas
-    const cy = upperY;
-    r += `<rect x="${cx}" y="${cy}" width="${cw}" height="${ch}" fill="${def.color}" stroke="${def.border}" stroke-width="0.9"/>`;
-    // Label — only show if cabinet wide enough
+  // ── Draw all cabinets using their actual canvas positions ──
+  cabs.forEach(c => {
+    const def = TYPES[c.type] || TYPES.base;
+    const cx = c.x + ox;
+    const cy = c.y + oy;
+    const cw = c.w * SCALE;
+    const ch = c.h * SCALE;
+    const sd = def.dash ? 'stroke-dasharray="5,3"' : '';
+    r += `<rect x="${cx}" y="${cy}" width="${cw}" height="${ch}" fill="${def.color}" stroke="${def.border}" stroke-width="0.9" ${sd}/>`;
     if (cw > 20) {
       r += `<text x="${cx+cw/2}" y="${cy+ch/2-3}" text-anchor="middle" font-size="7" font-weight="700" fill="#1A202C">${c.label}</text>`;
       r += `<text x="${cx+cw/2}" y="${cy+ch/2+5}" text-anchor="middle" font-size="6" fill="#4A5568">${c.w}"×${c.h}"</text>`;
     } else {
       r += `<text x="${cx+cw/2}" y="${cy+ch/2+2}" text-anchor="middle" font-size="6" font-weight="700" fill="#1A202C" transform="rotate(-90,${cx+cw/2},${cy+ch/2})">${c.label}</text>`;
     }
-    // Width tick below this cabinet's bottom
+    // Width tick below cabinet
     r += `<line x1="${cx}" y1="${cy+ch+3}" x2="${cx+cw}" y2="${cy+ch+3}" stroke="#bbb" stroke-width="0.5"/>`;
     r += `<text x="${cx+cw/2}" y="${cy+ch+10}" text-anchor="middle" font-size="6" fill="#777">${c.w}"</text>`;
   });
 
-  // ── Base cabinets ──
-  bases.forEach(c => {
-    const def = TYPES[c.type] || TYPES.base;
-    const cxIn = c.x / SCALE;
-    const cx = PAD + cxIn * sc;
-    const cw = c.w * sc;
-    const ch = Math.min(c.h, 34) * sc;
-    const sd = def.dash ? 'stroke-dasharray="5,3"' : '';
-    r += `<rect x="${cx}" y="${baseY}" width="${cw}" height="${ch}" fill="${def.color}" stroke="${def.border}" stroke-width="0.9" ${sd}/>`;
-    if (cw > 20) {
-      r += `<text x="${cx+cw/2}" y="${baseY+ch/2-3}" text-anchor="middle" font-size="7" font-weight="700" fill="#1A202C">${c.label}</text>`;
-      r += `<text x="${cx+cw/2}" y="${baseY+ch/2+5}" text-anchor="middle" font-size="6" fill="#4A5568">${c.w}"</text>`;
-    } else {
-      r += `<text x="${cx+cw/2}" y="${baseY+ch/2+2}" text-anchor="middle" font-size="6" font-weight="700" fill="#1A202C" transform="rotate(-90,${cx+cw/2},${baseY+ch/2})">${c.label}</text>`;
-    }
-    // Width tick below
-    r += `<line x1="${cx}" y1="${baseY+ch+3}" x2="${cx+cw}" y2="${baseY+ch+3}" stroke="#bbb" stroke-width="0.5"/>`;
-    r += `<text x="${cx+cw/2}" y="${baseY+ch+11}" text-anchor="middle" font-size="6" fill="#777">${c.w}"</text>`;
-  });
-
-  // ── Row height labels (left side) ──
-  r += `<text x="${PAD-3}" y="${floorLineY - upperH*sc/2 + 2}" text-anchor="end" font-size="6.5" fill="#666">${upperH}"</text>`;
-  r += `<text x="${PAD-3}" y="${baseY + baseH*sc/2 + 2}" text-anchor="end" font-size="6.5" fill="#666">34½"</text>`;
-
-  // viewBox uses the internal sc coordinate space; width:100% makes it fill its container
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}" preserveAspectRatio="xMinYMin meet" style="width:100%;height:auto;display:block">${r}</svg>`;
 }
 
