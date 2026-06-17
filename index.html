@@ -1337,27 +1337,65 @@ async function saveToDrive() {
     const now = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
     const fileName = `Cabinet Report — ${layout.name} — ${now}`;
 
-    // Use html2canvas to capture the report page, then jsPDF to make a PDF
-    const reportPage = document.getElementById('report-page');
+    const { jsPDF } = window.jspdf;
 
-    const canvas = await html2canvas(reportPage, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: '#ffffff',
-      logging: false
+    // Page 1: full report minus the schedule section
+    const reportPage = document.getElementById('report-page');
+    const schedule = reportPage.querySelector('.rp-schedule');
+    const footer = reportPage.querySelector('.rp-footer');
+
+    // Temporarily hide schedule and footer for page 1 capture
+    if (schedule) schedule.style.display = 'none';
+    if (footer) footer.style.display = 'none';
+
+    const page1Canvas = await html2canvas(reportPage, {
+      scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false
     });
 
-    const imgData = canvas.toDataURL('image/jpeg', 0.92);
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [canvas.width / 2, canvas.height / 2] });
-    pdf.addImage(imgData, 'JPEG', 0, 0, canvas.width / 2, canvas.height / 2);
+    // Restore
+    if (schedule) schedule.style.display = '';
+    if (footer) footer.style.display = '';
+
+    // Page 2: schedule only
+    let page2Canvas = null;
+    if (schedule) {
+      page2Canvas = await html2canvas(schedule, {
+        scale: 2, useCORS: true, backgroundColor: '#ffffff', logging: false
+      });
+    }
+
+    // Build PDF — landscape letter (792 x 612 pt)
+    const PW = 792, PH = 612;
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'letter' });
+
+    // Page 1
+    const p1W = page1Canvas.width / 2;
+    const p1H = page1Canvas.height / 2;
+    const p1Scale = Math.min(PW / p1W, PH / p1H);
+    const p1DW = p1W * p1Scale;
+    const p1DH = p1H * p1Scale;
+    pdf.addImage(page1Canvas.toDataURL('image/jpeg', 0.92), 'JPEG', (PW-p1DW)/2, (PH-p1DH)/2, p1DW, p1DH);
+
+    // Page 2 — schedule
+    if (page2Canvas) {
+      pdf.addPage('letter', 'landscape');
+      const p2W = page2Canvas.width / 2;
+      const p2H = page2Canvas.height / 2;
+      const p2Scale = Math.min(PW / p2W, PH / p2H);
+      const p2DW = p2W * p2Scale;
+      const p2DH = p2H * p2Scale;
+      pdf.addImage(page2Canvas.toDataURL('image/jpeg', 0.92), 'JPEG', (PW-p2DW)/2, 20, p2DW, p2DH);
+    }
+
     const pdfBlob = pdf.output('blob');
 
     statusEl.textContent = 'Uploading to Drive…';
 
-    // Upload PDF to Drive root first
     const formData = new FormData();
-    formData.append('metadata', new Blob([JSON.stringify({ name: fileName + '.pdf', mimeType: 'application/pdf' })], { type: 'application/json' }));
+    formData.append('metadata', new Blob([JSON.stringify({
+      name: fileName + '.pdf',
+      mimeType: 'application/pdf'
+    })], { type: 'application/json' }));
     formData.append('file', pdfBlob, fileName + '.pdf');
 
     const uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink&supportsAllDrives=true', {
@@ -1369,7 +1407,6 @@ async function saveToDrive() {
     const uploaded = await uploadResp.json();
     if (!uploaded.id) throw new Error('Upload failed: ' + JSON.stringify(uploaded));
 
-    // Move to Cabinet Layout Reports folder
     statusEl.textContent = 'Moving to folder…';
     const moveResp = await fetch(`https://www.googleapis.com/drive/v3/files/${uploaded.id}?addParents=${DRIVE_FOLDER_ID}&removeParents=root&fields=id,webViewLink&supportsAllDrives=true`, {
       method: 'PATCH',
@@ -1379,7 +1416,6 @@ async function saveToDrive() {
 
     const moved = await moveResp.json();
     const link = moved.webViewLink || uploaded.webViewLink;
-
     statusEl.innerHTML = `✅ <a href="${link}" target="_blank" style="color:var(--accent)">Saved to Drive ↗</a>`;
     toast(`Report saved: ${fileName}`);
     setTimeout(() => { statusEl.textContent = ''; }, 8000);
