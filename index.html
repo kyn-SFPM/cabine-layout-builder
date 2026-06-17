@@ -777,14 +777,7 @@ function renderCanvas() {
     }
   }
 
-  // Walls
-  const addWall = (x, y, w, h) => {
-    const el = document.createElement('div');
-    el.style.cssText = `position:absolute;background:#4A5568;left:${x}px;top:${y}px;width:${w}px;height:${h}px;border-radius:1px`;
-    canvas.appendChild(el);
-  };
-  addWall(wallOff, wallOff, px(layout.roomW), wallT);
-  addWall(wallOff, wallOff, wallT, px(layout.roomD));
+  // Walls removed — L shape caused alignment confusion
 
   // Dim labels
   const dimLabel = (text, x, y) => {
@@ -795,27 +788,7 @@ function renderCanvas() {
   dimLabel(layout.roomW + '" →', wallOff + 4, wallOff - 14);
   dimLabel('↑ ' + layout.roomD + '"', 4, wallOff + 14);
 
-  // 60" floor reference line
-  // The wall is at wallOff (top of canvas space). Upper cabs hang from wall.
-  // We show the 60" line: wallOff + wallT + gap represents the top of the upper zone.
-  // More usefully, we find the tallest upper cab and place the 60" line at its bottom.
-  const upperCabs = layout.cabinets.filter(c => c.type === 'upper');
-  if (upperCabs.length) {
-    const tallestUpper = Math.max(...upperCabs.map(c => c.h));
-    // The 60" line should sit at: top of upper row + tallest upper height
-    const upperTopY = Math.min(...upperCabs.map(c => c.y));
-    const floorLineY = upperTopY + px(tallestUpper);
-    const flEl = document.createElement('div');
-    flEl.className = 'floor-line';
-    flEl.style.top = floorLineY + 'px';
-    canvas.appendChild(flEl);
-    const flLbl = document.createElement('div');
-    flLbl.className = 'floor-label';
-    flLbl.textContent = '← 60" from floor';
-    flLbl.style.top = (floorLineY - 12) + 'px';
-    flLbl.style.left = (wallOff + px(layout.roomW) + 6) + 'px';
-    canvas.appendChild(flLbl);
-  }
+  // 60" floor line removed — was rendering at incorrect position
 
   // Cabinets
   layout.cabinets.forEach(cab => {
