@@ -98,8 +98,8 @@
   .snap-line-v.active, .snap-line-h.active { background: rgba(200,145,58,0.7); }
   .room-dim { position: absolute; font-size: 9px; color: var(--muted); pointer-events: none; white-space: nowrap; }
   /* 60" floor reference line on canvas */
-  .floor-line { position: absolute; left: 0; right: 0; height: 1px; background: rgba(200,145,58,0.4); pointer-events: none; z-index: 2; border-top: 1px dashed rgba(200,145,58,0.6); }
-  .floor-label { position: absolute; font-size: 8px; color: var(--accent); pointer-events: none; white-space: nowrap; z-index: 3; background: rgba(255,255,255,0.8); padding: 0 3px; }
+  .floor-line { position: absolute; left: 0; right: 0; height: 8px; background: transparent; cursor: ns-resize; z-index: 5; border-top: 2px dashed rgba(200,145,58,0.8); }
+  .floor-label { position: absolute; font-size: 8px; color: var(--accent); pointer-events: none; white-space: nowrap; z-index: 6; background: rgba(255,255,255,0.85); padding: 1px 4px; border-radius: 2px; }
 
   .cabinet { position: absolute; cursor: grab; user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 2px; transition: box-shadow 0.1s; }
   .cabinet:active { cursor: grabbing; }
@@ -788,7 +788,39 @@ function renderCanvas() {
   dimLabel(layout.roomW + '" →', wallOff + 4, wallOff - 14);
   dimLabel('↑ ' + layout.roomD + '"', 4, wallOff + 14);
 
-  // 60" floor line removed — was rendering at incorrect position
+  // 60" draggable floor reference line
+  // Default Y: place it 200px below the top wall, or restore saved position
+  const savedFloorY = layout.floorLineY || (wallOff + wallT + px(30));
+  const flEl = document.createElement('div');
+  flEl.className = 'floor-line';
+  flEl.style.top = savedFloorY + 'px';
+  canvas.appendChild(flEl);
+  const flLbl = document.createElement('div');
+  flLbl.className = 'floor-label';
+  flLbl.textContent = '↕ 60" from floor';
+  flLbl.style.top = (savedFloorY - 14) + 'px';
+  flLbl.style.left = '6px';
+  canvas.appendChild(flLbl);
+
+  // Make floor line draggable
+  flEl.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startTop = parseInt(flEl.style.top);
+    const onMove = (ev) => {
+      const newY = Math.max(wallOff + 10, startTop + (ev.clientY - startY));
+      flEl.style.top = newY + 'px';
+      flLbl.style.top = (newY - 14) + 'px';
+      layout.floorLineY = newY;
+      save();
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
 
   // Cabinets
   layout.cabinets.forEach(cab => {
