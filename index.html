@@ -1299,7 +1299,7 @@ if (state.layouts.length===0) loadDeepwater();
 // ─── GOOGLE DRIVE INTEGRATION ─────────────────────────────────────────────
 const GAPI_CLIENT_ID = '536097817729-t7lluu26353po1c8e6vks84g20t9sdpf.apps.googleusercontent.com';
 const DRIVE_FOLDER_ID = '1hz6GFuU6ksErc8zOepTBxbIq6pcyS_KV';
-const SCOPES = 'https://www.googleapis.com/auth/drive.file';
+const SCOPES = 'https://www.googleapis.com/auth/drive';
 
 let _driveToken = null;
 
@@ -1383,7 +1383,8 @@ async function saveToDrive() {
     const metadata = {
       name: fileName + '.html',
       parents: [DRIVE_FOLDER_ID],
-      mimeType: 'text/html'
+      mimeType: 'text/html',
+      driveId: DRIVE_FOLDER_ID
     };
 
     const boundary = 'cab_report_boundary';
@@ -1398,7 +1399,7 @@ Content-Transfer-Encoding: base64
 ${b64}
 --${boundary}--`;
 
-    const uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
+    const uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink&supportsAllDrives=true', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
