@@ -1320,7 +1320,7 @@ if (state.layouts.length===0) loadDeepwater();
 // ─── GOOGLE DRIVE INTEGRATION ─────────────────────────────────────────────
 const GAPI_CLIENT_ID = '536097817729-t7lluu26353po1c8e6vks84g20t9sdpf.apps.googleusercontent.com';
 const DRIVE_FOLDER_ID = '1hz6GFuU6ksErc8zOepTBxbIq6pcyS_KV';
-const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/documents';
+const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
 let _driveToken = null;
 
@@ -1351,145 +1351,92 @@ async function saveToDrive() {
 
   try {
     const token = await getDriveToken();
-    statusEl.textContent = 'Preparing report…';
+    statusEl.textContent = 'Capturing report…';
 
-    const m = layout.meta || DEFAULT_META;
-    const uppers = layout.cabinets.filter(c => c.type === 'upper');
-    const bases  = layout.cabinets.filter(c => c.type !== 'upper');
     const now = new Date().toLocaleDateString('en-US',{year:'numeric',month:'long',day:'numeric'});
     const fileName = `Cabinet Report — ${layout.name} — ${now}`;
 
-    const requests = [];
-    let cursor = 1;
+    // Grab the rendered report HTML
+    const reportPage = document.getElementById('report-page');
+    const reportHTML = reportPage.outerHTML;
 
-    const ins = (text) => {
-      requests.push({ insertText: { location: { index: cursor }, text } });
-      const len = text.length;
-      cursor += len;
-      return { start: cursor - len, end: cursor };
+    // Build a full standalone HTML document to upload
+    const fullHTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${fileName}</title>
+<style>
+  body { margin: 0; padding: 20px; font-family: 'Segoe UI', system-ui, sans-serif; background: #E8EDF2; }
+  .report-page { background: #fff; width: 1100px; margin: 0 auto; border: 1px solid #ccc; box-shadow: 0 2px 12px rgba(0,0,0,0.08); font-size: 11px; color: #1A202C; }
+  :root { --navy: #1B2A4A; --navy2: #2E4A7A; --steel: #4A5568; --bg: #F7F8FA; --surface: #FFFFFF; --border: #D1D9E0; --text: #1A202C; --muted: #6B7280; --accent: #C8913A; }
+  .rp-title-bar { background: var(--navy); color: #fff; padding: 10px 16px; font-size: 13px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; }
+  .rp-section-head { background: var(--navy); color: #fff; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; padding: 5px 10px; }
+  .rp-info-table { width: 100%; border-collapse: collapse; }
+  .rp-info-table td { padding: 4px 10px; border-bottom: 1px solid #EDF1F5; vertical-align: top; }
+  .rp-info-table td:first-child { color: var(--muted); width: 48%; font-size: 10px; }
+  .rp-info-table td:last-child { font-weight: 500; font-size: 10.5px; }
+  .rp-photo-ph { background: #1a1a1a; color: #555; display: flex; align-items: center; justify-content: center; font-size: 10px; height: 200px; border-bottom: 1px solid var(--border); flex-direction: column; gap: 6px; position: relative; overflow: hidden; }
+  .rp-photo-ph img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .rp-photo-upload-btn, .rp-photo-clear-btn { display: none; }
+  .type-chip { display:inline-block; padding:1px 6px; border-radius:3px; font-size:9px; font-weight:600; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { padding: 4px 8px; border-bottom: 1px solid #EDF1F5; font-size: 10.5px; }
+  .group-label td { background: #F7F8FA; font-weight: 700; font-size: 10px; color: var(--navy); padding: 5px 8px; }
+  .sched-head th { background: var(--navy); color: #fff; font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; padding: 5px 8px; }
+  .obs-chip { display:inline-block; padding:2px 8px; border-radius:10px; font-size:9px; font-weight:600; margin:2px; }
+  .status-badge { display:inline-block; padding:3px 10px; border-radius:4px; font-size:10px; font-weight:700; }
+</style>
+</head>
+<body>${reportHTML}</body>
+</html>`;
+
+    // Encode as base64
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(fullHTML);
+    let binary = '';
+    bytes.forEach(b => binary += String.fromCharCode(b));
+    const b64 = btoa(binary);
+
+    statusEl.textContent = 'Uploading to Drive…';
+
+    // Upload as HTML file to Drive (renders well and is editable)
+    const metadata = {
+      name: fileName + '.html',
+      parents: [DRIVE_FOLDER_ID],
+      mimeType: 'text/html'
     };
 
-    const styleText = (start, end, opts={}) => {
-      const fmt = {};
-      if (opts.bold !== undefined) fmt.bold = opts.bold;
-      if (opts.size) fmt.fontSize = { magnitude: opts.size, unit: 'PT' };
-      if (opts.color) fmt.foregroundColor = { color: { rgbColor: { red: opts.color[0]/255, green: opts.color[1]/255, blue: opts.color[2]/255 } } };
-      if (Object.keys(fmt).length) {
-        requests.push({ updateTextStyle: { range: { startIndex: start, endIndex: end }, textStyle: fmt, fields: Object.keys(fmt).join(',') } });
-      }
-    };
+    const boundary = 'cab_report_boundary';
+    const body = `--${boundary}
+Content-Type: application/json; charset=UTF-8
 
-    const shadePara = (start, end, r, g, b) => {
-      requests.push({ updateParagraphStyle: {
-        range: { startIndex: start, endIndex: end },
-        paragraphStyle: { shading: { backgroundColor: { color: { rgbColor: { red: r/255, green: g/255, blue: b/255 } } } } },
-        fields: 'shading'
-      }});
-    };
+${JSON.stringify(metadata)}
+--${boundary}
+Content-Type: text/html
+Content-Transfer-Encoding: base64
 
-    const sectionHead = (text) => {
-      const {start, end} = ins(text + '\n');
-      styleText(start, end, { bold: true, size: 9, color: [255,255,255] });
-      shadePara(start, end, 27, 42, 74);
-    };
+${b64}
+--${boundary}--`;
 
-    // Title
-    const t = ins('CABINET LAYOUT REPORT — SERVICE FIRST PROPERTY MANAGEMENT\n');
-    styleText(t.start, t.end, { bold: true, size: 14, color: [255,255,255] });
-    shadePara(t.start, t.end, 27, 42, 74);
-
-    const sub = ins(`${layout.name}   |   ${now}\n`);
-    styleText(sub.start, sub.end, { bold: false, size: 11, color: [27,42,74] });
-
-    ins('\n');
-
-    // Property Info
-    sectionHead('PROJECT / PROPERTY INFORMATION');
-    const infoRows = [
-      ['Property / Community', m.property||'—'],
-      ['Unit / Floor Plan', m.unit||'—'],
-      ['Room', m.room||'Kitchen'],
-      ['Layout Type', `Standard Kitchen – ${layout.shape||'L'} Shape`],
-      ['Date Documented', m.date||now],
-      ['Source', m.source||'—'],
-      ['Verified', m.verified||'—'],
-      ['Notes', m.notes||'—'],
-    ];
-    infoRows.forEach(([label, val]) => {
-      const ls = ins(label + ': ');
-      styleText(ls.start, ls.end, { bold: true });
-      ins(val + '\n');
-    });
-
-    ins('\n');
-
-    // Cabinet Schedule
-    sectionHead('CABINET SCHEDULE');
-    const hdr = ins('#\tType\tLabel\tDimensions\tQty\tNotes\n');
-    styleText(hdr.start, hdr.end, { bold: true, color: [27,42,74] });
-
-    let rowNum = 1;
-    if (uppers.length) {
-      const gs = ins('Upper Cabinets\n');
-      styleText(gs.start, gs.end, { bold: true, color: [200,145,58] });
-      uppers.forEach(c => ins(`${rowNum++}\t${TYPE_LABELS[c.type]||c.type}\t${c.label}\t${c.w}" × ${c.h}" × 12"\t1\t${c.notes||''}\n`));
-    }
-    if (bases.length) {
-      const gs = ins('Base Cabinets\n');
-      styleText(gs.start, gs.end, { bold: true, color: [200,145,58] });
-      bases.forEach(c => ins(`${rowNum++}\t${TYPE_LABELS[c.type]||c.type}\t${c.label}\t${c.w}" × 34½" × 24"\t1\t${c.notes||''}\n`));
-    }
-
-    ins('\n');
-
-    // Summary
-    sectionHead('SUMMARY');
-    ins(`Total Upper Cabinets: ${uppers.length}\n`);
-    ins(`Total Base Cabinets: ${bases.length}\n`);
-    ins(`Total Cabinet Count: ${layout.cabinets.length}\n`);
-
-    ins('\n');
-
-    // Observations
-    if (Array.isArray(m.obs) && m.obs.length) {
-      sectionHead('OBSERVATIONS / CONDITIONS');
-      m.obs.forEach(o => ins(`• ${o}\n`));
-      ins('\n');
-    }
-
-    // Footer
-    const ft = ins('Generated by Cabinet Layout Builder — Service First Property Management\n');
-    styleText(ft.start, ft.end, { size: 9, color: [107,114,128] });
-
-    // 1. Create blank doc
-    statusEl.textContent = 'Creating document…';
-    const createResp = await fetch('https://docs.googleapis.com/v1/documents', {
+    const uploadResp = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: fileName })
-    });
-    const doc = await createResp.json();
-    const docId = doc.documentId;
-
-    // 2. Batch update formatting
-    statusEl.textContent = 'Formatting…';
-    await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requests })
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body
     });
 
-    // 3. Move to shared folder
-    statusEl.textContent = 'Saving to Drive folder…';
-    await fetch(`https://www.googleapis.com/drive/v3/files/${docId}?addParents=${DRIVE_FOLDER_ID}&removeParents=root&fields=id`, {
-      method: 'PATCH',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({})
-    });
+    const result = await uploadResp.json();
 
-    statusEl.textContent = '✅ Saved to Drive!';
-    toast(`Saved: ${fileName}`);
-    setTimeout(() => { statusEl.textContent = ''; }, 5000);
+    if (result.id) {
+      statusEl.innerHTML = `✅ <a href="${result.webViewLink}" target="_blank" style="color:var(--accent)">Saved to Drive ↗</a>`;
+      toast(`Report saved: ${fileName}`);
+      setTimeout(() => { statusEl.textContent = ''; }, 8000);
+    } else {
+      throw new Error(JSON.stringify(result));
+    }
 
   } catch (err) {
     console.error('Drive error:', err);
@@ -1499,7 +1446,5 @@ async function saveToDrive() {
     btn.disabled = false;
   }
 }
-
 </script>
-</body>
-</html>
+
